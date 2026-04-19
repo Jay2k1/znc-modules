@@ -1,14 +1,13 @@
 /*
- * monitor_multiclient.cpp -- a ZNC module: MONITOR multiplexer
+ * monitor.cpp — ZNC module: MONITOR multiplexer
  *
  * Virtualises the IRC MONITOR list across multiple attached clients.
- * Each client maintains its own MONITOR list (interest set); the module manages the
+ * Each client maintains its own interest set; the module manages the
  * union that is actually sent to the server.  This solves two problems:
  *
- *  1. On client attach/reconnect, some IRCds such as the one used by Libera
- *     won't re-send RPL_MONONLINE / RPL_MONOFFLINE for nicks already on the 
- *     MONITOR list.  This module replays cached status toward the attaching 
- *     client directly.
+ *  1. On client attach/reconnect, the server won't re-send RPL_MONONLINE /
+ *     RPL_MONOFFLINE for nicks already on the MONITOR list.  This module
+ *     replays cached status toward the attaching client directly.
  *
  *  2. One client issuing `MONITOR - nick` or `MONITOR C` no longer silently
  *     removes nicks that other attached clients still care about.
@@ -25,11 +24,10 @@
  *   the cached status, then fanned out only to clients that care.
  *
  * Installation:
- *   znc-buildmod monitor_multiclient.cpp
- *   mv monitor_multiclient.so .znc/modules/
- *   /znc loadmod monitor_multiclient       (network scope)
+ *   znc-buildmod monitor.cpp
+ *   /znc loadmod monitor          (network scope)
  *
- * This is a NETWORK module -- load it once per network, not globally!
+ * This is a NETWORK module — load it once per network, not globally.
  */
 
 #include <znc/Modules.h>
@@ -99,7 +97,7 @@ class CMonitorMod : public CModule {
         m_clientNicks[pClient]; // default-construct NickSet
 
         // Replay current cached status for all nicks we already track.
-        // The client hasn't sent MONITOR + yet, so its interest set is empty --
+        // The client hasn't sent MONITOR + yet, so its interest set is empty —
         // we'll replay per-nick when it does send MONITOR +. Nothing to do here
         // except register the client.
     }
@@ -133,7 +131,7 @@ class CMonitorMod : public CModule {
         CString sCmd = sLine.Token(0).AsUpper();
         if (sCmd != "MONITOR") return CONTINUE;
 
-		if (IsDebug()) PutModule("OnUserRaw: Intercepted MONITOR command: " + sLine);
+		if (IsDebug()) PutModule("OnUserRaw: Intercepted MONITOR command: \x11" + sLine);
 
         CString sSubCmd = sLine.Token(1).AsUpper();
 
@@ -230,8 +228,8 @@ class CMonitorMod : public CModule {
                 infoIt->second.status != MonitorStatus::Unknown) {
                 // We already have a cached status — replay it to this client
                 // immediately without going to the server.
+                if (IsDebug()) PutModule("└ HandleMonitorAdd: cached data for " + nick + " found.");
                 SendStatusToClient(pClient, infoIt->second);
-                if (IsDebug()) PutModule("HandleMonitorAdd: replying with already cached data for " + nick);
 
             } else {
                 // Not yet known or first time seeing this nick — need server reply
@@ -241,7 +239,7 @@ class CMonitorMod : public CModule {
                     info.nick = nick;
                     m_nickInfo[key] = info;
                 }
-                if (IsDebug()) PutModule("HandleMonitorAdd: needing server reply for " + nick);
+                if (IsDebug()) PutModule("└ HandleMonitorAdd: no cached data for " + nick + ", will request from IRC server.");
                 toAddToServer.insert(nick);
             }
         }
@@ -253,7 +251,7 @@ class CMonitorMod : public CModule {
                 if (!joined.empty()) joined += ",";
                 joined += n;
             }
-            if (IsDebug()) PutModule("HandleMonitorAdd: sending to IRC: MONITOR + " + joined);
+            if (IsDebug()) PutModule("  └ HandleMonitorAdd: sending to IRC: \x11MONITOR + " + joined);
 
             PutIRC("MONITOR + " + joined);
         }
@@ -281,7 +279,7 @@ class CMonitorMod : public CModule {
             if (clientIt != m_clientNicks.end()) {
                 // erase is case-insensitive via NickLess comparator
                 clientIt->second.erase(nick);
-                if (IsDebug()) PutModule("HandleMonitorRemove: removing client interest for " + nick);
+                if (IsDebug()) PutModule("└ HandleMonitorRemove: removing client interest for " + nick);
             }
 
             // Only remove from server if no other client still wants it
@@ -297,7 +295,7 @@ class CMonitorMod : public CModule {
                 if (!joined.empty()) joined += ",";
                 joined += n;
             }
-            if (IsDebug()) PutModule("HandleMonitorRemove: sending to IRC: MONITOR - " + joined);
+            if (IsDebug()) PutModule("└ HandleMonitorRemove: sending to IRC: \x11MONITOR - " + joined);
             PutIRC("MONITOR - " + joined);
         }
 
@@ -305,7 +303,7 @@ class CMonitorMod : public CModule {
     }
 
     // -----------------------------------------------------------------------
-    // MONITOR C handler -- clear this client's interest set only
+    // MONITOR C handler — clear this client's interest set only
     // -----------------------------------------------------------------------
     EModRet HandleMonitorClear() {
         CClient* pClient = GetClient();
@@ -320,7 +318,7 @@ class CMonitorMod : public CModule {
             if (!AnyClientWantsExcept(nick, pClient)) {
                 toRemoveFromServer.insert(nick);
                 m_nickInfo.erase(nick.AsLower());
-	            if (IsDebug()) PutModule("HandleMonitorClear: clearing for client: locally removing " + nick);
+	            if (IsDebug()) PutModule("└ HandleMonitorClear: clearing for client: locally removing " + nick);
             }
         }
 
@@ -332,16 +330,16 @@ class CMonitorMod : public CModule {
                 if (!joined.empty()) joined += ",";
                 joined += n;
             }
-            if (IsDebug()) PutModule("HandleMonitorClear: sending to IRC: MONITOR - " + joined);
+            if (IsDebug()) PutModule("└ HandleMonitorClear: sending to IRC: \x11MONITOR - " + joined);
             PutIRC("MONITOR - " + joined);
         }
 
-        // Do NOT forward MONITOR C as that would wipe everyone's list
+        // Do NOT forward MONITOR C — that would wipe everyone's list
         return HALTCORE;
     }
 
     // -----------------------------------------------------------------------
-    // MONITOR L -- reply with this client's list
+    // MONITOR L — reply with this client's list
     // -----------------------------------------------------------------------
     EModRet HandleMonitorList() {
         CClient* pClient = GetClient();
@@ -351,7 +349,7 @@ class CMonitorMod : public CModule {
         CString myNick = GetNetwork()->GetCurNick();
 
         if (clientIt == m_clientNicks.end() || clientIt->second.empty()) {
-            if (IsDebug()) PutModule("HandleMonitorList: sending to client: :" + GetNetwork()->GetIRCServer() + " 733 " + myNick + " :End of MONITOR list");
+            if (IsDebug()) PutModule("└ HandleMonitorList: sending to client " + pClient->GetFullName() + ": \x11:" + GetNetwork()->GetIRCServer() + " 733 " + myNick + " :End of MONITOR list");
             pClient->PutClient(":" + GetNetwork()->GetIRCServer() + " 733 " + myNick + " :End of MONITOR list");
             return HALTCORE;
         }
@@ -363,7 +361,7 @@ class CMonitorMod : public CModule {
 
         auto flushBatch = [&]() {
             if (!batch.empty()) {
-            	if (IsDebug()) PutModule("HandleMonitorList: sending to client: :" + GetNetwork()->GetIRCServer() + " 732 " + myNick + " :" + batch);
+            	if (IsDebug()) PutModule("└ HandleMonitorList: sending to client " + pClient->GetFullName() + ": \x11:" + GetNetwork()->GetIRCServer() + " 732 " + myNick + " :" + batch);
                 pClient->PutClient(":" + GetNetwork()->GetIRCServer() + " 732 " + myNick + " :" + batch);
                 batch.clear();
             }
@@ -376,13 +374,13 @@ class CMonitorMod : public CModule {
         }
         flushBatch();
 
-		if (IsDebug()) PutModule("HandleMonitorList: sending to client: :" + GetNetwork()->GetIRCServer() + " 733 " + myNick + " :End of MONITOR list");
+		if (IsDebug()) PutModule("└ HandleMonitorList: sending to client " + pClient->GetFullName() + ": \x11:" + GetNetwork()->GetIRCServer() + " 733 " + myNick + " :End of MONITOR list");
         pClient->PutClient(":" + GetNetwork()->GetIRCServer() + " 733 " + myNick + " :End of MONITOR list");
         return HALTCORE;
     }
 
     // -----------------------------------------------------------------------
-    // MONITOR S -- reply with cached status for this client's nicks
+    // MONITOR S — reply with cached status for this client's nicks
     // -----------------------------------------------------------------------
     EModRet HandleMonitorStatus() {
         CClient* pClient = GetClient();
@@ -398,16 +396,20 @@ class CMonitorMod : public CModule {
             auto infoIt = m_nickInfo.find(nick.AsLower());
             if (infoIt == m_nickInfo.end() ||
                 infoIt->second.status == MonitorStatus::Unknown) {
-                // Genuinely unknown -- queue for a targeted MONITOR + round-trip.
+                // Genuinely unknown — queue for a targeted MONITOR + round-trip.
                 // We re-add the nick so the server will send us a fresh reply,
                 // which OnNumericMessage will cache and fan out normally.
                 unknown.insert(nick);
                 continue;
             }
             if (infoIt->second.status == MonitorStatus::Offline) {
-                offline.push_back(infoIt->second.host.empty() ? nick : infoIt->second.host);
+                offline.push_back(infoIt->second.host.empty()
+                                      ? nick
+                                      : infoIt->second.host);
             } else {
-                online.push_back(infoIt->second.host.empty() ? nick : infoIt->second.host);
+                online.push_back(infoIt->second.host.empty()
+                                     ? nick
+                                     : infoIt->second.host);
             }
         }
 
@@ -420,9 +422,9 @@ class CMonitorMod : public CModule {
                 if (!joined.empty()) joined += ",";
                 joined += n;
             }
-			if (IsDebug()) PutModule("HandleMonitorStatus: sending to IRC: MONITOR - :" + joined);
+			if (IsDebug()) PutModule("└ HandleMonitorStatus: sending to IRC: \x11MONITOR - :" + joined);
             PutIRC("MONITOR - " + joined);
-			if (IsDebug()) PutModule("HandleMonitorStatus: sending to IRC: MONITOR + :" + joined);
+			if (IsDebug()) PutModule("└ HandleMonitorStatus: sending to IRC: \x11MONITOR + :" + joined);
             PutIRC("MONITOR + " + joined);
         }
  
@@ -436,18 +438,18 @@ class CMonitorMod : public CModule {
                 if (!batch.empty()) batch += ",";
                 batch += entry;
                 if (batch.size() >= 400) {
-                    if (IsDebug()) PutModule("HandleMonitorStatus: sending to client: :" + server + " " + CString(numeric) + " " + myNick + " :" + batch);
+                    if (IsDebug()) PutModule("  └ HandleMonitorStatus: sending to client " + pClient->GetFullName() + ": \x11:" + server + " " + CString(numeric) + " " + myNick + " :" + batch);
                     pClient->PutClient(":" + server + " " + CString(numeric) + " " + myNick + " :" + batch);
                     batch.clear();
                 }
             }
             if (!batch.empty()) {
-				if (IsDebug()) PutModule("HandleMonitorStatus: sending to client: :" + server + " " + CString(numeric) + " " + myNick + " :" + batch);
+				if (IsDebug()) PutModule("  └ HandleMonitorStatus: sending to client " + pClient->GetFullName() + ": \x11:" + server + " " + CString(numeric) + " " + myNick + " :" + batch);
                 pClient->PutClient(":" + server + " " + CString(numeric) + " " + myNick + " :" + batch);
             }
         };
  
-		if (IsDebug()) PutModule("HandleMonitorStatus: replying with cached MONITOR status for client");
+		if (IsDebug()) PutModule("└ HandleMonitorStatus: replying with cached MONITOR status for client");
         sendList(online,  730);
         sendList(offline, 731);
  
@@ -455,7 +457,7 @@ class CMonitorMod : public CModule {
     }
 
     // -----------------------------------------------------------------------
-    // Incoming 730 RPL_MONONLINE -- update cache, fan out to interested clients
+    // Incoming 730 RPL_MONONLINE — update cache, fan out to interested clients
     // -----------------------------------------------------------------------
     EModRet HandleRplMonOnline(CNumericMessage& msg) {
         // Format: :server 730 yournick :nick!user@host[,nick!user@host,...]
@@ -508,14 +510,14 @@ class CMonitorMod : public CModule {
     }
 
     // -----------------------------------------------------------------------
-    // Incoming 732 RPL_MONLIST -- eat it; we answer MONITOR L ourselves
+    // Incoming 732 RPL_MONLIST — eat it; we answer MONITOR L ourselves
     // -----------------------------------------------------------------------
     EModRet HandleRplMonList(CNumericMessage&) {
         return HALTCORE;
     }
 
     // -----------------------------------------------------------------------
-    // Incoming 734 ERR_MONLISTFULL -- forward to the client that caused it
+    // Incoming 734 ERR_MONLISTFULL — forward to the client that caused it
     // -----------------------------------------------------------------------
     EModRet HandleErrMonListFull(CNumericMessage& msg) {
         // Forward to the currently active client only (the one whose MONITOR +
@@ -546,7 +548,7 @@ class CMonitorMod : public CModule {
     }
 
     void RemoveFromServer(const CString& nick) {
-        if (IsDebug()) PutModule("RemoveFromServer: sending to IRC: MONITOR - " + nick);
+        if (IsDebug()) PutModule("└ RemoveFromServer: sending to IRC: \x11MONITOR - " + nick);
         PutIRC("MONITOR - " + nick);
     }
 
@@ -558,7 +560,7 @@ class CMonitorMod : public CModule {
         int numeric = (info.status == MonitorStatus::Offline) ? 731 : 730;
         CString entry = info.host.empty() ? info.nick : info.host;
 
-        if (IsDebug()) PutModule("SendStatusToClient: sending to client: :" + server + " " + CString(numeric) + " " + myNick + " :" + entry);
+        if (IsDebug()) PutModule("  └ SendStatusToClient: sending to client " + pClient->GetFullName() + ": \x11:" + server + " " + CString(numeric) + " " + myNick + " :" + entry);
         pClient->PutClient(":" + server + " " + CString(numeric) + " " + myNick + " :" + entry);
     }
 
@@ -581,7 +583,7 @@ class CMonitorMod : public CModule {
                 }
             }
             if (!batch.empty()) {
-	            if (IsDebug()) PutModule("FanOutNumeric: sending to client: :" + server + " " + CString(numeric) + " " + myNick + " :" + batch);
+	            if (IsDebug()) PutModule("└ FanOutNumeric: sending to client " + pClient->GetFullName() + ": \x11:" + server + " " + CString(numeric) + " " + myNick + " :" + batch);
                 pClient->PutClient(":" + server + " " + CString(numeric) + " " + myNick + " :" + batch);
             }
         }
@@ -591,7 +593,7 @@ class CMonitorMod : public CModule {
     void FanOutRaw(const CString& sLine, const CString& nick) {
         for (auto& [pClient, clientNicks] : m_clientNicks) {
             if (clientNicks.count(nick)) {
-	            if (IsDebug()) PutModule("FanOutRaw: sending to client: " + sLine);
+	            if (IsDebug()) PutModule("FanOutRaw: sending to client " + pClient->GetFullName() + ": \x11" + sLine);
                 pClient->PutClient(sLine);
             }
         }
